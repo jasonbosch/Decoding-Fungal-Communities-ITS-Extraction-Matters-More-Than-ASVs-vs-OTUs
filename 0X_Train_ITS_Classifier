@@ -1,0 +1,41 @@
+#Reference
+#https://docs.qiime2.org/2024.2/tutorials/feature-classifier/
+
+#Activate QIIME2
+conda activate qiime2-amplicon-2024.2
+
+#Create folder
+mkdir ../06_Miscellaneous/UNITE_ITS_Classifier
+
+#Change to working directory
+cd ../06_Miscellaneous/UNITE_ITS_Classifier/
+
+#Downloaded All Eukaryotes, UNITE 9.0, release date: 2023-07-25
+#https://doi.org/10.15156/BIO/2938081
+wget https://files.plutof.ut.ee/public/orig/1C/C2/1CC2477429B3A703CC1C7A896A7EFF457BB0D471877CB8D18074959DBB630D10.tgz
+tar xzf 1CC2477429B3A703CC1C7A896A7EFF457BB0D471877CB8D18074959DBB630D10.tgz
+
+#Import the data to QIIME
+#Use the developer sequences
+qiime tools import \
+    --type 'FeatureData[Sequence]' \
+    --input-path ./developer/sh_refs_qiime_ver9_dynamic_all_25.07.2023_dev.fasta \
+    --output-path unite9_AllEuk_20230725_developer_dynamic_otus.qza
+
+qiime tools import \
+    --type 'FeatureData[Taxonomy]' \
+    --input-format HeaderlessTSVTaxonomyFormat \
+    --input-path ./developer/sh_taxonomy_qiime_ver9_dynamic_all_25.07.2023_dev.txt \
+    --output-path unite9_AllEuk_20230725_developer_taxonomy.qza
+
+#Using home as TMP directory due to space issues
+mkdir qiime-temp
+export TMPDIR='/mnt/DATA01/jason/qiime-temp'
+
+#Train the classifier
+qiime feature-classifier fit-classifier-naive-bayes \
+    --i-reference-reads unite9_AllEuk_20230725_developer_dynamic_otus.qza \
+    --i-reference-taxonomy unite9_AllEuk_20230725_developer_taxonomy.qza \
+    --o-classifier UNITE_9_AllEuk_20230725_developer-dynamic-classifier.qza
+
+conda deactivate

@@ -1,0 +1,616 @@
+###########################################
+#This is using the cluster and locations need adapting accordingly
+###########################################
+
+#Run with "bash -i " or there is a conda activation error.
+
+#Hopefully this will stop on errors
+set -e
+
+echo "Started at" $(date)
+
+#Prepare Conda
+conda activate qiime2-amplicon-2024.2
+
+#Use specific temp directory to avoid problems with memory
+export TMPDIR='/mnt/DATA01/jason/qiime-temp'
+		
+#Create directory to store cleaned data
+if test -d "../02_Cleaned_Data/"; then
+	echo "Cleaned data directory exists, skipping directory creation."
+else
+	echo "Creating 02_Cleaned_Data directory..."
+	mkdir ../02_Cleaned_Data
+	echo "Done at" $(date)
+fi
+
+PRIMERS=("gITS7_ITS4" "ITS1f_ITS2" "V6_V8_new" "Pauvert")
+
+for PAIR in ${PRIMERS[@]}
+do
+
+	#Import data into QIIME2 object with manifest
+	if test -f "../02_Cleaned_Data/Seqs_FWD_${PAIR}.qza"; then
+		echo "Seqs_FWD_${PAIR} already exists, skipping import."
+	else
+		echo "Importing Seqs_FWD_${PAIR}..."
+		qiime tools import \
+			--type 'SampleData[SequencesWithQuality]' \
+			--input-path ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_forward_${PAIR}.tsv \
+			--input-format 'SingleEndFastqManifestPhred33V2' \
+			--output-path ../02_Cleaned_Data/Seqs_FWD_${PAIR}.qza
+		echo "Done at" $(date)
+	fi
+
+	if test -f "../02_Cleaned_Data/Seqs_ITSxpress_${PAIR}.qza"; then
+		echo "Seqs_ITSxpress_${PAIR} already exists, skipping import."
+	else
+		echo "Importing Seqs_ITSxpress_${PAIR}..."
+		qiime tools import \
+			--type 'SampleData[SequencesWithQuality]' \
+			--input-path ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_ITSxpress_${PAIR}.tsv \
+			--input-format 'SingleEndFastqManifestPhred33V2' \
+			--output-path ../02_Cleaned_Data/Seqs_ITSxpress_${PAIR}.qza
+		echo "Done at" $(date)
+	fi
+
+	#Created a summary of the multiplexed files to check for quality
+	if test -f "../02_Cleaned_Data/Seqs_ITSxpress_${PAIR}.qzv"; then
+		echo "Summary files already exist, skipping sequencing summary."
+	else
+		echo "Summarising sequencing results..."
+		qiime demux summarize \
+			--i-data ../02_Cleaned_Data/Seqs_FWD_${PAIR}.qza \
+			--o-visualization ../02_Cleaned_Data/Seqs_FWD_${PAIR}.qzv
+		
+		qiime demux summarize \
+			--i-data ../02_Cleaned_Data/Seqs_ITSxpress_${PAIR}.qza \
+			--o-visualization ../02_Cleaned_Data/Seqs_ITSxpress_${PAIR}.qzv
+		echo "Done at" $(date)
+	fi
+	
+	#############
+	
+	#FWD ASV ROLLING
+	#Using Rolling et. al. adjustments for fungal sequences
+	
+	if test -d "../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}"; then
+		echo "FWD_ASV_Rolling_${PAIR} directory exists, skipping directory creation."
+	else
+		echo "Creating FWD_ASV_Rolling_${PAIR} directory..."
+		mkdir ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}
+		echo "Done at" $(date)
+	fi
+	
+	#Denoise sequences
+	if test -f "../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/rep-seqs.qza"; then
+		echo "FWD_ASV_Rolling_${PAIR} rep-seqs already exists, skipping denoising."
+	else
+		echo "Denoising FWD_ASV_Rolling_${PAIR}..."
+		qiime dada2 denoise-single \
+			--i-demultiplexed-seqs ../02_Cleaned_Data/Seqs_FWD_${PAIR}.qza \
+			--p-n-threads 7 \
+			--p-max-ee 8 \
+			--p-trunc-q 8 \
+			--p-trunc-len 0 \
+			--p-trim-left 0 \
+			--p-pooling-method "pseudo" \
+			--o-table ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/table.qza \
+			--o-representative-sequences ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/rep-seqs.qza \
+			--o-denoising-stats ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/denoising-stats.qza
+		echo "Done at" $(date)
+	fi
+
+	#And feature data summary
+	if test -f "../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/rep-seqs.qzv"; then
+		echo "FWD_ASV_Rolling_${PAIR} rep-seqs summary exists, skipping summarisation."
+	else
+		echo "Creating FWD_ASV_Rolling_${PAIR} rep-seqs summary..."
+		qiime feature-table tabulate-seqs \
+			--i-data ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/rep-seqs.qza \
+			--o-visualization ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/rep-seqs.qzv
+		echo "Done at" $(date)
+	fi
+
+	#Used my pre-trained ITS classifier to classify samples with the Naive Bayes classifier.
+	if test -f "../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/taxonomy.qza"; then
+		echo "FWD_ASV_Rolling_${PAIR} sequences have been classified, skipping taxonomic classification."
+	else
+		echo "Classifying FWD_ASV_Rolling_${PAIR} sequences..."
+		if [[ ${PAIR} == "V6_V8_new" ]]; then
+			qiime feature-classifier classify-sklearn \
+				--i-classifier ../06_Miscellaneous/Silva_SSU_Classifier/silva-138.1-ssu-nr99-V6_V8_new-classifier.qza \
+				--i-reads ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/rep-seqs.qza \
+				--o-classification ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/taxonomy.qza
+		else
+			qiime feature-classifier classify-sklearn \
+				--i-classifier ../06_Miscellaneous/UNITE_ITS_Classifier/UNITE_9_AllEuk_20230725_developer-dynamic-classifier.qza \
+				--i-reads ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/rep-seqs.qza \
+				--o-classification ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/taxonomy.qza
+		fi	
+		echo "Done at" $(date)
+	fi
+
+	#Put all the stuff we want to export for use in a separate folder and export to there
+	if test -d "../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/export"; then
+		echo "FWD_ASV_Rolling_${PAIR} export directory exists, skipping directory creation."
+	else
+		echo "Exporting FWD_ASV_Rolling_${PAIR} results..."
+		mkdir ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/export
+		qiime tools export \
+			--input-path ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/taxonomy.qza \
+			--output-path ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/export
+		qiime tools export \
+			--input-path ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/table.qza \
+			--output-path ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/export
+		biom convert \
+			-i ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/export/feature-table.biom \
+			-o ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/export/OTU.tsv \
+			--to-tsv
+		sed -i s/"#OTU"/"OTU"/ ../02_Cleaned_Data/FWD_ASV_Rolling_${PAIR}/export/OTU.tsv
+		echo "Done at" $(date)
+	fi
+
+	#############
+	
+	#FWD ASV
+	#Using default settings
+	
+	if test -d "../02_Cleaned_Data/FWD_ASV_${PAIR}"; then
+		echo "FWD_ASV_${PAIR} directory exists, skipping directory creation."
+	else
+		echo "Creating FWD_ASV_${PAIR} directory..."
+		mkdir ../02_Cleaned_Data/FWD_ASV_${PAIR}
+		echo "Done at" $(date)
+	fi
+	
+	#Denoise sequences
+	if test -f "../02_Cleaned_Data/FWD_ASV_${PAIR}/rep-seqs.qza"; then
+		echo "FWD_ASV_${PAIR} rep-seqs already exists, skipping denoising."
+	else
+		echo "Denoising FWD_ASV_${PAIR}..."
+		qiime dada2 denoise-single \
+			--i-demultiplexed-seqs ../02_Cleaned_Data/Seqs_FWD_${PAIR}.qza \
+			--p-n-threads 7 \
+			--p-trunc-len 0 \
+			--p-trim-left 0 \
+			--p-pooling-method "pseudo" \
+			--o-table ../02_Cleaned_Data/FWD_ASV_${PAIR}/table.qza \
+			--o-representative-sequences ../02_Cleaned_Data/FWD_ASV_${PAIR}/rep-seqs.qza \
+			--o-denoising-stats ../02_Cleaned_Data/FWD_ASV_${PAIR}/denoising-stats.qza
+		echo "Done at" $(date)
+	fi
+		
+	#And feature data summary
+	if test -f "../02_Cleaned_Data/FWD_ASV_${PAIR}/rep-seqs.qzv"; then
+		echo "FWD_ASV_${PAIR} rep-seqs summary exists, skipping summarisation."
+	else
+		echo "Creating FWD_ASV_${PAIR} rep-seqs summary..."
+		qiime feature-table tabulate-seqs \
+			--i-data ../02_Cleaned_Data/FWD_ASV_${PAIR}/rep-seqs.qza \
+			--o-visualization ../02_Cleaned_Data/FWD_ASV_${PAIR}/rep-seqs.qzv
+		echo "Done at" $(date)
+	fi
+
+	#Used my pre-trained ITS classifier to classify samples with the Naive Bayes classifier.
+	if test -f "../02_Cleaned_Data/FWD_ASV_${PAIR}/taxonomy.qza"; then
+		echo "FWD_ASV_${PAIR} sequences have been classified, skipping taxonomic classification."
+	else
+		echo "Classifying FWD_ASV_${PAIR} sequences..."
+		if [[ ${PAIR} == "V6_V8_new" ]]; then
+			qiime feature-classifier classify-sklearn \
+				--i-classifier ../06_Miscellaneous/Silva_SSU_Classifier/silva-138.1-ssu-nr99-V6_V8_new-classifier.qza \
+				--i-reads ../02_Cleaned_Data/FWD_ASV_${PAIR}/rep-seqs.qza \
+				--o-classification ../02_Cleaned_Data/FWD_ASV_${PAIR}/taxonomy.qza
+		else
+			qiime feature-classifier classify-sklearn \
+				--i-classifier ../06_Miscellaneous/UNITE_ITS_Classifier/UNITE_9_AllEuk_20230725_developer-dynamic-classifier.qza \
+				--i-reads ../02_Cleaned_Data/FWD_ASV_${PAIR}/rep-seqs.qza \
+				--o-classification ../02_Cleaned_Data/FWD_ASV_${PAIR}/taxonomy.qza
+		fi	
+		echo "Done at" $(date)
+	fi
+
+	#Put all the stuff we want to export for use in a separate folder and export to there
+	if test -d "../02_Cleaned_Data/FWD_ASV_${PAIR}/export"; then
+		echo "FWD_ASV_${PAIR} export directory exists, skipping directory creation."
+	else
+		echo "Exporting FWD_ASV_${PAIR} results..."
+		mkdir ../02_Cleaned_Data/FWD_ASV_${PAIR}/export
+		qiime tools export \
+			--input-path ../02_Cleaned_Data/FWD_ASV_${PAIR}/taxonomy.qza \
+			--output-path ../02_Cleaned_Data/FWD_ASV_${PAIR}/export
+		qiime tools export \
+			--input-path ../02_Cleaned_Data/FWD_ASV_${PAIR}/table.qza \
+			--output-path ../02_Cleaned_Data/FWD_ASV_${PAIR}/export
+		biom convert \
+			-i ../02_Cleaned_Data/FWD_ASV_${PAIR}/export/feature-table.biom \
+			-o ../02_Cleaned_Data/FWD_ASV_${PAIR}/export/OTU.tsv \
+			--to-tsv
+		sed -i s/"#OTU"/"OTU"/ ../02_Cleaned_Data/FWD_ASV_${PAIR}/export/OTU.tsv
+		echo "Done at" $(date)
+	fi
+
+	#############
+
+	#FWD OTU
+
+	if test -d "../02_Cleaned_Data/FWD_OTU_${PAIR}"; then
+		echo "FWD_OTU_${PAIR} directory exists, skipping directory creation."
+	else
+		echo "Creating FWD_OTU_${PAIR} directory..."
+		mkdir ../02_Cleaned_Data/FWD_OTU_${PAIR}
+		echo "Done at" $(date)
+	fi
+	
+	#Dereplicate the sequences
+	if test -f "../02_Cleaned_Data/FWD_OTU_${PAIR}/derep-seqs.qza"; then
+		echo "FWD_OTU_${PAIR} dereplicated sequences exist, skipping dereplication."
+	else
+		echo "Dereplicating FWD_OTU_${PAIR}..."
+		qiime vsearch dereplicate-sequences \
+			--i-sequences ../02_Cleaned_Data/Seqs_FWD_${PAIR}.qza \
+			--o-dereplicated-table ../02_Cleaned_Data/FWD_OTU_${PAIR}/derep_table.qza \
+			--o-dereplicated-sequences ../02_Cleaned_Data/FWD_OTU_${PAIR}/derep-seqs.qza
+		echo "Done at" $(date)
+	fi
+
+	#Cluster at 97% similarity
+	if test -f "../02_Cleaned_Data/FWD_OTU_${PAIR}/rep-seqs-dn-97.qza"; then
+		echo "FWD_OTU_${PAIR} clusters already exist, skipping clustering."
+	else
+		echo "Clustering FWD_OTU_${PAIR} sequences at 97%..."
+		qiime vsearch cluster-features-de-novo \
+			--i-table ../02_Cleaned_Data/FWD_OTU_${PAIR}/derep_table.qza \
+			--i-sequences ../02_Cleaned_Data/FWD_OTU_${PAIR}/derep-seqs.qza \
+			--p-perc-identity 0.97 \
+			--o-clustered-table ../02_Cleaned_Data/FWD_OTU_${PAIR}/table-dn-97.qza \
+			--o-clustered-sequences ../02_Cleaned_Data/FWD_OTU_${PAIR}/rep-seqs-dn-97.qza
+		echo "Done at" $(date)
+	fi
+
+	#Identify chimeras with uchime
+	if test -f "../02_Cleaned_Data/FWD_OTU_${PAIR}/chimeras.qza"; then
+		echo "FWD_OTU_${PAIR} chimeras exist, skipping chimera detection."
+	else
+		echo "Detecting FWD_OTU_${PAIR} chimeras..."
+		qiime vsearch uchime-denovo \
+			--i-sequences ../02_Cleaned_Data/FWD_OTU_${PAIR}/rep-seqs-dn-97.qza \
+			--i-table ../02_Cleaned_Data/FWD_OTU_${PAIR}/table-dn-97.qza \
+			--o-chimeras ../02_Cleaned_Data/FWD_OTU_${PAIR}/chimeras.qza \
+			--o-nonchimeras ../02_Cleaned_Data/FWD_OTU_${PAIR}/nonchimeras.qza \
+			--o-stats ../02_Cleaned_Data/FWD_OTU_${PAIR}/chimera-stats.qza
+		echo "Done at" $(date)
+	fi
+
+	#Filter out chimeras
+	if test -f "../02_Cleaned_Data/FWD_OTU_${PAIR}/rep-seqs-dn-97-filtered.qza"; then
+		echo "FWD_OTU_${PAIR} chimera filtered sequences exist, skipping chimera filter."
+	else
+		echo "Filtering chimeras from FWD_OTU_${PAIR} sequences..."
+		qiime feature-table filter-features \
+			--i-table ../02_Cleaned_Data/FWD_OTU_${PAIR}/table-dn-97.qza \
+			--m-metadata-file ../02_Cleaned_Data/FWD_OTU_${PAIR}/nonchimeras.qza \
+			--o-filtered-table ../02_Cleaned_Data/FWD_OTU_${PAIR}/rep-seqs-table-dn-97-filtered.qza
+
+		qiime feature-table filter-seqs \
+			--i-data ../02_Cleaned_Data/FWD_OTU_${PAIR}/rep-seqs-dn-97.qza \
+			--m-metadata-file ../02_Cleaned_Data/FWD_OTU_${PAIR}/nonchimeras.qza \
+			--o-filtered-data ../02_Cleaned_Data/FWD_OTU_${PAIR}/rep-seqs-dn-97-filtered.qza
+		echo "Done at" $(date)
+	fi
+
+	#Used my pre-trained ITS classifier to classify samples with the Naive Bayes classifier.
+	if test -f "../02_Cleaned_Data/FWD_OTU_${PAIR}/taxonomy-dn-97.qza"; then
+		echo "FWD_OTU_${PAIR} sequences have been classified, skipping taxonomic classification."
+	else
+		echo "Classifying FWD_OTU_${PAIR} sequences..."
+		if [[ ${PAIR} == "V6_V8_new" ]]; then
+			qiime feature-classifier classify-sklearn \
+				--i-classifier ../06_Miscellaneous/Silva_SSU_Classifier/silva-138.1-ssu-nr99-V6_V8_new-classifier.qza \
+				--i-reads ../02_Cleaned_Data/FWD_OTU_${PAIR}/rep-seqs-dn-97-filtered.qza \
+				--o-classification ../02_Cleaned_Data/FWD_OTU_${PAIR}/taxonomy-dn-97.qza
+		else
+			qiime feature-classifier classify-sklearn \
+				--i-classifier ../06_Miscellaneous/UNITE_ITS_Classifier/UNITE_9_AllEuk_20230725_developer-dynamic-classifier.qza \
+				--i-reads ../02_Cleaned_Data/FWD_OTU_${PAIR}/rep-seqs-dn-97-filtered.qza \
+				--o-classification ../02_Cleaned_Data/FWD_OTU_${PAIR}/taxonomy-dn-97.qza
+		fi
+		echo "Done at" $(date)
+	fi
+
+
+	#Put all the stuff we want to export for use in a separate folder and export to there
+	if test -d "../02_Cleaned_Data/FWD_OTU_${PAIR}/export"; then
+		echo "FWD_OTU_${PAIR} export directory exists, skipping directory creation."
+	else
+		echo "Exporting FWD_OTU_${PAIR} results..."
+		mkdir ../02_Cleaned_Data/FWD_OTU_${PAIR}/export
+		qiime tools export \
+			--input-path ../02_Cleaned_Data/FWD_OTU_${PAIR}/taxonomy-dn-97.qza \
+			--output-path ../02_Cleaned_Data/FWD_OTU_${PAIR}/export
+		qiime tools export \
+			--input-path ../02_Cleaned_Data/FWD_OTU_${PAIR}/rep-seqs-table-dn-97-filtered.qza \
+			--output-path ../02_Cleaned_Data/FWD_OTU_${PAIR}/export
+		biom convert \
+			-i ../02_Cleaned_Data/FWD_OTU_${PAIR}/export/feature-table.biom \
+			-o ../02_Cleaned_Data/FWD_OTU_${PAIR}/export/OTU-dn-97.tsv \
+			--to-tsv
+		sed -i s/"#OTU"/"OTU"/ ../02_Cleaned_Data/FWD_OTU_${PAIR}/export/OTU-dn-97.tsv
+		echo "Done at" $(date)
+	fi
+
+	#############
+
+	#ITS ASV Rolling
+	#Using Rolling et. al. adjustments for fungal sequences
+	
+	if test -d "../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}"; then
+		echo "ITS_ASV_Rolling_${PAIR} directory exists, skipping directory creation."
+	else
+		echo "Creating ITS_ASV_Rolling_${PAIR} directory..."
+		mkdir ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}
+		echo "Done at" $(date)
+	fi
+
+	#Using Rolling et. al. adjustments for fungal sequences
+	if test -f "../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/rep-seqs.qza"; then
+		echo "ITS_ASV_Rolling_${PAIR} rep-seqs already exists, skipping denoising."
+	else
+		echo "Denoising ITS_ASV_Rolling_${PAIR}..."
+		qiime dada2 denoise-single \
+			--i-demultiplexed-seqs ../02_Cleaned_Data/Seqs_ITSxpress_${PAIR}.qza \
+			--p-n-threads 7 \
+			--p-max-ee 8 \
+			--p-trunc-q 8 \
+			--p-trunc-len 0 \
+			--p-trim-left 0 \
+			--p-pooling-method "pseudo" \
+			--o-table ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/table.qza \
+			--o-representative-sequences ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/rep-seqs.qza \
+			--o-denoising-stats ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/denoising-stats.qza
+		echo "Done at" $(date)
+	fi
+
+	#And feature data summary
+	if test -f "../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/rep-seqs.qzv"; then
+		echo "ITS_ASV_Rolling_${PAIR} rep-seqs summary exists, skipping summarisation."
+	else
+		echo "Creating ITS_ASV_Rolling_${PAIR} rep-seqs summary..."
+		qiime feature-table tabulate-seqs \
+			--i-data ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/rep-seqs.qza \
+			--o-visualization ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/rep-seqs.qzv
+		echo "Done at" $(date)
+	fi
+
+	#Used my pre-trained ITS classifier to classify samples with the Naive Bayes classifier.
+	if test -f "../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/taxonomy.qza"; then
+		echo "ITS_ASV_Rolling_${PAIR} sequences have been classified, skipping taxonomic classification."
+	else
+		echo "Classifying ITS_ASV_Rolling_${PAIR} sequences..."
+		if [[ ${PAIR} == "V6_V8_new" ]]; then
+			qiime feature-classifier classify-sklearn \
+				--i-classifier ../06_Miscellaneous/Silva_SSU_Classifier/silva-138.1-ssu-nr99-V6_V8_new-classifier.qza \
+				--i-reads ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/rep-seqs.qza \
+				--o-classification ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/taxonomy.qza
+		else
+			qiime feature-classifier classify-sklearn \
+				--i-classifier ../06_Miscellaneous/UNITE_ITS_Classifier/UNITE_9_AllEuk_20230725_developer-dynamic-classifier.qza \
+				--i-reads ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/rep-seqs.qza \
+				--o-classification ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/taxonomy.qza
+		fi	
+		echo "Done at" $(date)
+	fi
+
+	#Put all the stuff we want to export for use in a separate folder and export to there
+	if test -d "../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/export"; then
+		echo "ITS_ASV_Rolling_${PAIR} export directory exists, skipping directory creation."
+	else
+		echo "Exporting ITS_ASV_Rolling_${PAIR} results..."
+		mkdir ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/export
+		qiime tools export \
+			--input-path ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/taxonomy.qza \
+			--output-path ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/export
+		qiime tools export \
+			--input-path ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/table.qza \
+			--output-path ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/export
+		biom convert \
+			-i ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/export/feature-table.biom \
+			-o ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/export/OTU.tsv \
+			--to-tsv
+		sed -i s/"#OTU"/"OTU"/ ../02_Cleaned_Data/ITS_ASV_Rolling_${PAIR}/export/OTU.tsv
+		echo "Done at" $(date)
+	fi
+
+	#############
+	
+	#ITS ASV
+	#Using default settings
+	
+	if test -d "../02_Cleaned_Data/ITS_ASV_${PAIR}"; then
+		echo "ITS_ASV_${PAIR} directory exists, skipping directory creation."
+	else
+		echo "Creating ITS_ASV_${PAIR} directory..."
+		mkdir ../02_Cleaned_Data/ITS_ASV_${PAIR}
+		echo "Done at" $(date)
+	fi
+
+	#Denoise sequences
+	if test -f "../02_Cleaned_Data/ITS_ASV_${PAIR}/rep-seqs.qza"; then
+		echo "ITS_ASV_${PAIR} rep-seqs already exists, skipping denoising."
+	else
+		echo "Denoising ITS_ASV_${PAIR}..."
+		qiime dada2 denoise-single \
+			--i-demultiplexed-seqs ../02_Cleaned_Data/Seqs_ITSxpress_${PAIR}.qza \
+			--p-n-threads 7 \
+			--p-trunc-len 0 \
+			--p-trim-left 0 \
+			--p-pooling-method "pseudo" \
+			--o-table ../02_Cleaned_Data/ITS_ASV_${PAIR}/table.qza \
+			--o-representative-sequences ../02_Cleaned_Data/ITS_ASV_${PAIR}/rep-seqs.qza \
+			--o-denoising-stats ../02_Cleaned_Data/ITS_ASV_${PAIR}/denoising-stats.qza
+		echo "Done at" $(date)
+	fi
+
+	#And feature data summary
+	if test -f "../02_Cleaned_Data/ITS_ASV_${PAIR}/rep-seqs.qzv"; then
+		echo "ITS_ASV_${PAIR} rep-seqs summary exists, skipping summarisation."
+	else
+		echo "Creating ITS_ASV_${PAIR} rep-seqs summary..."
+		qiime feature-table tabulate-seqs \
+			--i-data ../02_Cleaned_Data/ITS_ASV_${PAIR}/rep-seqs.qza \
+			--o-visualization ../02_Cleaned_Data/ITS_ASV_${PAIR}/rep-seqs.qzv
+		echo "Done at" $(date)
+	fi
+
+	#Used my pre-trained ITS classifier to classify samples with the Naive Bayes classifier.
+	if test -f "../02_Cleaned_Data/ITS_ASV_${PAIR}/taxonomy.qza"; then
+		echo "ITS_ASV_${PAIR} sequences have been classified, skipping taxonomic classification."
+	else
+		echo "Classifying ITS_ASV_${PAIR} sequences..."
+		if [[ ${PAIR} == "V6_V8_new" ]]; then
+			qiime feature-classifier classify-sklearn \
+				--i-classifier ../06_Miscellaneous/Silva_SSU_Classifier/silva-138.1-ssu-nr99-V6_V8_new-classifier.qza \
+				--i-reads ../02_Cleaned_Data/ITS_ASV_${PAIR}/rep-seqs.qza \
+				--o-classification ../02_Cleaned_Data/ITS_ASV_${PAIR}/taxonomy.qza
+		else
+			qiime feature-classifier classify-sklearn \
+				--i-classifier ../06_Miscellaneous/UNITE_ITS_Classifier/UNITE_9_AllEuk_20230725_developer-dynamic-classifier.qza \
+				--i-reads ../02_Cleaned_Data/ITS_ASV_${PAIR}/rep-seqs.qza \
+				--o-classification ../02_Cleaned_Data/ITS_ASV_${PAIR}/taxonomy.qza
+		fi	
+		echo "Done at" $(date)
+	fi
+
+	#Put all the stuff we want to export for use in a separate folder and export to there
+	if test -d "../02_Cleaned_Data/ITS_ASV_${PAIR}/export"; then
+		echo "ITS_ASV_${PAIR} export directory exists, skipping directory creation."
+	else
+		echo "Exporting ITS_ASV_${PAIR} results..."
+		mkdir ../02_Cleaned_Data/ITS_ASV_${PAIR}/export
+		qiime tools export \
+			--input-path ../02_Cleaned_Data/ITS_ASV_${PAIR}/taxonomy.qza \
+			--output-path ../02_Cleaned_Data/ITS_ASV_${PAIR}/export
+		qiime tools export \
+			--input-path ../02_Cleaned_Data/ITS_ASV_${PAIR}/table.qza \
+			--output-path ../02_Cleaned_Data/ITS_ASV_${PAIR}/export
+		biom convert \
+			-i ../02_Cleaned_Data/ITS_ASV_${PAIR}/export/feature-table.biom \
+			-o ../02_Cleaned_Data/ITS_ASV_${PAIR}/export/OTU.tsv \
+			--to-tsv
+		sed -i s/"#OTU"/"OTU"/ ../02_Cleaned_Data/ITS_ASV_${PAIR}/export/OTU.tsv
+		echo "Done at" $(date)
+	fi
+
+	#############
+	
+	#ITS OTU
+	
+	if test -d "../02_Cleaned_Data/ITS_OTU_${PAIR}"; then
+		echo "ITS_OTU_${PAIR} directory exists, skipping directory creation."
+	else
+		echo "Creating ITS_OTU_${PAIR} directory..."
+		mkdir ../02_Cleaned_Data/ITS_OTU_${PAIR}
+		echo "Done at" $(date)
+	fi
+
+	#Dereplicate the sequences
+	if test -f "../02_Cleaned_Data/ITS_OTU_${PAIR}/derep-seqs.qza"; then
+		echo "ITS_OTU_${PAIR} dereplicated sequences exist, skipping dereplication."
+	else
+		echo "Dereplicating ITS_OTU_${PAIR}..."
+		qiime vsearch dereplicate-sequences \
+			--i-sequences ../02_Cleaned_Data/Seqs_ITSxpress_${PAIR}.qza \
+			--o-dereplicated-table ../02_Cleaned_Data/ITS_OTU_${PAIR}/derep_table.qza \
+			--o-dereplicated-sequences ../02_Cleaned_Data/ITS_OTU_${PAIR}/derep-seqs.qza
+		echo "Done at" $(date)
+	fi
+
+	#Cluster at 97% similarity
+	if test -f "../02_Cleaned_Data/ITS_OTU_${PAIR}/rep-seqs-dn-97.qza"; then
+		echo "ITS_OTU_${PAIR} clusters already exist, skipping clustering."
+	else
+		echo "Clustering ITS_OTU_${PAIR} sequences at 97%..."
+		qiime vsearch cluster-features-de-novo \
+			--i-table ../02_Cleaned_Data/ITS_OTU_${PAIR}/derep_table.qza \
+			--i-sequences ../02_Cleaned_Data/ITS_OTU_${PAIR}/derep-seqs.qza \
+			--p-perc-identity 0.97 --o-clustered-table ../02_Cleaned_Data/ITS_OTU_${PAIR}/table-dn-97.qza \
+			--o-clustered-sequences ../02_Cleaned_Data/ITS_OTU_${PAIR}/rep-seqs-dn-97.qza
+		echo "Done at" $(date)
+	fi
+
+	#Identify chimeras with uchime
+	if test -f "../02_Cleaned_Data/ITS_OTU_${PAIR}/chimeras.qza"; then
+		echo "ITS_OTU_${PAIR} chimeras exist, skipping chimera detection."
+	else
+		echo "Detecting ITS_OTU_${PAIR} chimeras..."
+		qiime vsearch uchime-denovo \
+			--i-sequences ../02_Cleaned_Data/ITS_OTU_${PAIR}/rep-seqs-dn-97.qza \
+			--i-table ../02_Cleaned_Data/ITS_OTU_${PAIR}/table-dn-97.qza \
+			--o-chimeras ../02_Cleaned_Data/ITS_OTU_${PAIR}/chimeras.qza \
+			--o-nonchimeras ../02_Cleaned_Data/ITS_OTU_${PAIR}/nonchimeras.qza \
+			--o-stats ../02_Cleaned_Data/ITS_OTU_${PAIR}/chimera-stats.qza
+		echo "Done at" $(date)
+	fi
+
+	#Filter out chimeras
+	if test -f "../02_Cleaned_Data/ITS_OTU_${PAIR}/rep-seqs-dn-97-filtered.qza"; then
+		echo "ITS_OTU_${PAIR} chimera filtered sequences exist, skipping chimera filter."
+	else
+		echo "Filtering chimeras from ITS_OTU_${PAIR} sequences..."
+		qiime feature-table filter-features \
+			--i-table ../02_Cleaned_Data/ITS_OTU_${PAIR}/table-dn-97.qza \
+			--m-metadata-file ../02_Cleaned_Data/ITS_OTU_${PAIR}/nonchimeras.qza \
+			--o-filtered-table ../02_Cleaned_Data/ITS_OTU_${PAIR}/rep-seqs-table-dn-97-filtered.qza
+		qiime feature-table filter-seqs \
+			--i-data ../02_Cleaned_Data/ITS_OTU_${PAIR}/rep-seqs-dn-97.qza \
+			--m-metadata-file ../02_Cleaned_Data/ITS_OTU_${PAIR}/nonchimeras.qza \
+			--o-filtered-data ../02_Cleaned_Data/ITS_OTU_${PAIR}/rep-seqs-dn-97-filtered.qza
+		echo "Done at" $(date)
+	fi
+
+	#Used my pre-trained ITS classifier to classify samples with the Naive Bayes classifier.
+	if test -f "../02_Cleaned_Data/ITS_OTU_${PAIR}/taxonomy-dn-97.qza"; then
+		echo "ITS_OTU_${PAIR} sequences have been classified, skipping taxonomic classification."
+	else
+		echo "Classifying ITS_OTU_${PAIR} sequences..."
+		if [[ ${PAIR} == "V6_V8_new" ]]; then
+			qiime feature-classifier classify-sklearn \
+				--i-classifier ../06_Miscellaneous/Silva_SSU_Classifier/silva-138.1-ssu-nr99-V6_V8_new-classifier.qza \
+				--i-reads ../02_Cleaned_Data/ITS_OTU_${PAIR}/rep-seqs-dn-97-filtered.qza \
+				--o-classification ../02_Cleaned_Data/ITS_OTU_${PAIR}/taxonomy-dn-97.qza
+		else
+			qiime feature-classifier classify-sklearn \
+				--i-classifier ../06_Miscellaneous/UNITE_ITS_Classifier/UNITE_9_AllEuk_20230725_developer-dynamic-classifier.qza \
+				--i-reads ../02_Cleaned_Data/ITS_OTU_${PAIR}/rep-seqs-dn-97-filtered.qza \
+				--o-classification ../02_Cleaned_Data/ITS_OTU_${PAIR}/taxonomy-dn-97.qza
+		fi
+		echo "Done at" $(date)
+	fi
+
+	#Put all the stuff we want to export for use in a separate folder and export to there
+	if test -d "../02_Cleaned_Data/ITS_OTU_${PAIR}/export"; then
+		echo "ITS_OTU_${PAIR} export directory exists, skipping directory creation."
+	else
+		echo "Exporting ITS_OTU_${PAIR} results..."
+		mkdir ../02_Cleaned_Data/ITS_OTU_${PAIR}/export
+		qiime tools export \
+			--input-path ../02_Cleaned_Data/ITS_OTU_${PAIR}/taxonomy-dn-97.qza \
+			--output-path ../02_Cleaned_Data/ITS_OTU_${PAIR}/export
+		qiime tools export \
+			--input-path ../02_Cleaned_Data/ITS_OTU_${PAIR}/rep-seqs-table-dn-97-filtered.qza \
+			--output-path ../02_Cleaned_Data/ITS_OTU_${PAIR}/export
+		biom convert \
+			-i ../02_Cleaned_Data/ITS_OTU_${PAIR}/export/feature-table.biom \
+			-o ../02_Cleaned_Data/ITS_OTU_${PAIR}/export/OTU-dn-97.tsv \
+			--to-tsv
+		sed -i s/"#OTU"/"OTU"/ ../02_Cleaned_Data/ITS_OTU_${PAIR}/export/OTU-dn-97.tsv
+		echo "Done at" $(date)
+	fi
+
+done
+
+#Close conda
+conda deactivate
+
+echo "Finished at" $(date)

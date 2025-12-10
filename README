@@ -1,0 +1,98 @@
+These are the scripts, written by Jason Bosch and Gabriele Tosadori, required to repeat the analysis in "Decoding Fungal Communities: ITS Extraction Matters More Than ASVs vs. OTUs." 
+
+These scripts were written and run on several different systems during the analysis programme, so the pointers to files, folders and other software is variable. It is necessary to adapt them to run on your own system. Although some scripts can be run in any order, we have presented a recommended order and brief description of each script here.
+
+001_create_input_list.R
+Get the list of fungal genomes from Ensembl Fungi.
+
+002_dowload_genomes.sh
+Download the genomes
+
+new_primers.txt
+ITS1 primer file.
+
+primers.txt
+ITS2 primer file.
+
+wobble_primers.txt
+18S primer file.
+
+003_find_and_substitute_new_primers.sh
+Perform the in silico PCR with the ITS1 primers.
+
+003_find_and_substitute.sh
+Perform the in silico PCR with the ITS2 primers.
+
+003_find_and_substitute_wobble_primers.sh
+Perform the in silico PCR with the 18S primers.
+
+004_find_trimming_locations.R
+Find the start and stop positions where primers bind
+
+005_substitute_new_primers.R
+Replace the original primer binding site, which may contain mismatches, with a perfect copy of the primer sequence and get the ITS1 amplicon.
+
+005_substitute_primers.R
+Replace the original primer binding site, which may contain mismatches, with a perfect copy of the primer sequence and get the ITS2 amplicon.
+
+005_substitute_wobble_primers.R
+Replace the original primer binding site, which may contain mismatches, with a perfect copy of the primer sequence and get the 18S amplicon.
+
+0X_Preparing_Community_Files
+Creates the microbial communities and then simulates the results of sequencing using Grinder.
+
+Generate_Communities.R
+Generates a random microbial community given various input parameters. Called by 0X_Preparing_Community_Files.
+
+substitute_scores.R
+Replaces the quality scores from Grinder with scores that were acquired from real sequencing data.
+
+0X_Prepare_reads
+Joins reads, trims for quality, performs ITS extraction and prepares a manifest for QIIME.
+
+0X_Train_18S_Classifier
+Trains the 18S naive-bayes classifier.
+
+0X_Train_ITS_Classifier
+Trains the ITS naive-bayes classifier.
+
+0X_QIIME_Analysis
+Performs the QIIME analysis
+
+X_Analyse_Data_ITS1f_ITS2_GABRI_NEW.R
+Imports the results of the QIIME analysis and creates a single phyloseq object for the ITS1 analysis.
+
+X_Analyse_Data_gITS7_ITS4_GABRI_NEW.R
+Imports the results of the QIIME analysis and creates a single phyloseq object for the ITS2 analysis.
+
+X_Analyse_Data_V6_V8_GABRI_NEW.R
+Imports the results of the QIIME analysis and creates a single phyloseq object for the 18S analysis.
+
+X_Analyse_Data_Pauvert_GABRI_NEW.R
+Imports the results of the QIIME analysis and creates a single phyloseq object for the Pauvert reanalysis.
+
+000_stats_analysis_functions.R
+Contains various functions needed for the analysis.
+
+000_stats_analysis_abundances.R
+Calculates and plots library sizes.
+
+000_stats_analysis_pauvert_lib_size.R
+Calculates and plots library size of Pauvert data.
+
+000_stats_analysis_barplots.R
+Calculates and plots relative abundance.
+
+000_stats_analysis_distances.R
+Plots alpha diversity.
+
+000_stats_analysis_diversity.R
+Plots differences in richness.
+
+000_stats_analysis_linear_models.R
+Calculates linear models.
+
+000_stats_analysis_sensitivity_specificity.R
+Calculates and plots sensitivity and specificity.
+
+

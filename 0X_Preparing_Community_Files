@@ -1,0 +1,185 @@
+PRIMERS=("gITS7_ITS4" "ITS1f_ITS2" "V6_V8_new")
+
+echo "Started at" $(date)
+
+for PAIR in ${PRIMERS[@]}
+do
+	
+	#Prepare directories
+	if test -d "/run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Communities_${PAIR}"; then
+		echo "Directory for $PAIR exists, skipping directory creation."
+	else
+		echo "Creating $PAIR directory..."
+		mkdir /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Communities_${PAIR}
+		echo "Done at" $(date)
+	fi
+	
+	#Generate communities at different diversity levels
+	if test -f "/run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Grinder_Files/Combined_Amplicons_${PAIR}.fa"; then
+		echo "Communities for $PAIR already exist, skipping community generation."
+	else
+		echo "Generating $PAIR communities..."
+		cd /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Amplicons_${PAIR}
+		Rscript /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/03_Analysis_Scripts/Generate_Communities.R DUPS=FALSE DIST=power RICH=50 LIBS=10 SEED=50
+		Rscript /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/03_Analysis_Scripts/Generate_Communities.R DUPS=FALSE DIST=power RICH=150 LIBS=10 SEED=150
+		Rscript /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/03_Analysis_Scripts/Generate_Communities.R DUPS=FALSE DIST=power RICH=250 LIBS=10 SEED=250
+		Rscript /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/03_Analysis_Scripts/Generate_Communities.R DUPS=FALSE DIST=power RICH=350 LIBS=10 SEED=350
+		Rscript /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/03_Analysis_Scripts/Generate_Communities.R DUPS=FALSE DIST=power RICH=450 LIBS=10 SEED=450
+		if [[ ${PAIR} == "ITS1f_ITS2" ]]; then
+			Rscript /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/03_Analysis_Scripts/Generate_Communities.R DUPS=TRUE DIST=power RICH=500 LIBS=10 SEED=500
+		else
+			Rscript /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/03_Analysis_Scripts/Generate_Communities.R DUPS=FALSE DIST=power RICH=500 LIBS=10 SEED=500
+		fi
+		Rscript /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/03_Analysis_Scripts/Generate_Communities.R DUPS=TRUE DIST=power RICH=600 LIBS=10 SEED=600
+		Rscript /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/03_Analysis_Scripts/Generate_Communities.R DUPS=TRUE DIST=power RICH=700 LIBS=10 SEED=700
+		Rscript /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/03_Analysis_Scripts/Generate_Communities.R DUPS=TRUE DIST=power RICH=800 LIBS=10 SEED=800
+
+		#Create one file with all the amplicons
+		cat *.fa > Combined_Amplicons_${PAIR}.fa
+
+		#Move the community files to their own folder and combined amplicons to grinder info
+		mv grinder_abundance_file* /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Communities_${PAIR}/
+		mv Combined_Amplicons_${PAIR}.fa /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Grinder_Files/
+		echo "Done at" $(date)
+	fi
+	
+	#Do library generation at three levels of library size (10k, 25k 50k)
+	if test -d "/run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Sequences_${PAIR}"; then
+		echo "Directory for $PAIR libraries exists, skipping directory creation."
+		cd /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Sequences_${PAIR}
+	else
+		echo "Creating directory for $PAIR libraries..."
+		mkdir /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Sequences_${PAIR}
+		cd /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Sequences_${PAIR}
+		echo "Done at" $(date)
+	fi
+	
+	#USING KMER 0 WHICH MAKES RANDOM BREAKS BECAUSE OTHERWISE THERE WERE PROBLEMS FINDING MATCHING KMERS WHICH RESULTED IN THE SCRIPT TERMINATING
+
+	#Small libraries (10k)
+	if test -f "/run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Sequences_${PAIR}/library_small_N_800-10-reads.fastq"; then
+		echo "Files for $PAIR small libraries exist, skipping library generation."
+	else
+		echo "Creating small $PAIR libraries..."
+		for FILE in /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Communities_${PAIR}/*
+		do
+			BASE=$(echo $FILE | grep -Eo N_[0-9]+$)
+		
+			grinder \
+			-base_name library_small_${BASE} \
+			-output_dir ./ \
+			-reference_file /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Grinder_Files/Combined_Amplicons_${PAIR}.fa \
+			-abundance_file $FILE \
+			-forward_reverse /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Grinder_Files/grinder_primers_${PAIR}.fasta \
+			-multiplex_ids /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Grinder_Files/grinder_barcodes.fasta \
+			-insert_dist 1500 \
+			-mate_orientation FR \
+			-total_reads 10000 \
+			-unidirectional 1 \
+			-rd 300 \
+			-length_bias 0 \
+			-copy_bias 0 \
+			-mutation_dist uniform 0.473 \
+			-mutation_ratio 99.9 0.1 \
+			-chimera_perc 10 \
+			-chimera_dist 314 38 1 \
+			-chimera_kmer 0 \
+			-random_seed 123456 \
+			-qual_levels 30 10 \
+			-fastq_output 1 \
+			-num_libraries 10
+		done
+		echo "Done at" $(date)
+	fi
+
+	#Medium libraries (25k)
+	if test -f "/run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Sequences_${PAIR}/library_medium_N_800-10-reads.fastq"; then
+		echo "Files for $PAIR medium libraries exist, skipping library generation."
+	else 
+		echo "Creating medium $PAIR libraries..."
+		for FILE in /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Communities_${PAIR}/*
+		do
+			BASE=$(echo $FILE | grep -Eo N_[0-9]+$)
+		
+			grinder \
+			-base_name library_medium_${BASE} \
+			-output_dir ./ \
+			-reference_file /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Grinder_Files/Combined_Amplicons_${PAIR}.fa \
+			-abundance_file $FILE \
+			-forward_reverse /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Grinder_Files/grinder_primers_${PAIR}.fasta \
+			-multiplex_ids /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Grinder_Files/grinder_barcodes.fasta \
+			-insert_dist 1500 \
+			-mate_orientation FR \
+			-total_reads 25000 \
+			-unidirectional 1 \
+			-rd 300 \
+			-length_bias 0 \
+			-copy_bias 0 \
+			-mutation_dist uniform 0.473 \
+			-mutation_ratio 99.9 0.1 \
+			-chimera_perc 10 \
+			-chimera_dist 314 38 1 \
+			-chimera_kmer 0 \
+			-random_seed 123456 \
+			-qual_levels 30 10 \
+			-fastq_output 1 \
+			-num_libraries 10
+		done
+		echo "Done at" $(date)
+	fi
+
+	#Large libraries (50k)
+	if test -f "/run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Sequences_${PAIR}/library_large_N_800-10-reads.fastq"; then
+		echo "Files for $PAIR large libraries exist, skipping library generation."
+	else
+		echo "Creating large $PAIR libraries..."
+		for FILE in /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Communities_${PAIR}/*
+		do
+			BASE=$(echo $FILE | grep -Eo N_[0-9]+$)
+		
+			grinder \
+			-base_name library_large_${BASE} \
+			-output_dir ./ \
+			-reference_file /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Grinder_Files/Combined_Amplicons_${PAIR}.fa \
+			-abundance_file $FILE \
+			-forward_reverse /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Grinder_Files/grinder_primers_${PAIR}.fasta \
+			-multiplex_ids /run/media/SharedStorage/MBU_Postdoc/02_Projects/06_ASV_OTU_Comparison/01_Raw_Data/Grinder_Files/grinder_barcodes.fasta \
+			-insert_dist 1500 \
+			-mate_orientation FR \
+			-total_reads 50000 \
+			-unidirectional 1 \
+			-rd 300 \
+			-length_bias 0 \
+			-copy_bias 0 \
+			-mutation_dist uniform 0.473 \
+			-mutation_ratio 99.9 0.1 \
+			-chimera_perc 10 \
+			-chimera_dist 314 38 1 \
+			-chimera_kmer 0 \
+			-random_seed 123456 \
+			-qual_levels 30 10 \
+			-fastq_output 1 \
+			-num_libraries 10
+		done
+		echo "Done at" $(date)
+	fi
+done
+
+echo "Finished at" $(date)
+
+
+###########################################
+#TRANSFER FILES TO CLUSTER
+###########################################
+
+###########################################
+#Gabriele  script to get new quality scores
+###########################################
+
+
+
+
+
+
+
+

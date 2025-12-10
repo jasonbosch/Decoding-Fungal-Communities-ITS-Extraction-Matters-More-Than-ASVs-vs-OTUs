@@ -1,0 +1,263 @@
+###########################################
+#This is using the cluster and locations need adapting accordingly
+###########################################
+
+#Run with "bash -i " or there is a conda activation error.
+
+#Hopefully this will stop on errors
+set -e
+
+PRIMERS=("gITS7_ITS4" "ITS1f_ITS2" "V6_V8_new")
+
+echo "Started at" $(date)
+
+for PAIR in ${PRIMERS[@]}
+do
+
+	#Create a temporary directory for splitting the reads
+	if test -d "../06_Miscellaneous/tempsplit"; then
+			echo "Temporary splitting directory exists, skipping directory creation."
+		else
+			echo "Creating temporary splitting directory..."
+			mkdir ../06_Miscellaneous/tempsplit
+			echo "Done at" $(date)
+		fi
+
+	#Split the paired ends into forward and reverse reads
+	if [[ $(ls ../01_Raw_Data/Sequences_${PAIR}/*new_scores.fastq | wc -l) -eq $(($(ls ../01_Raw_Data/Sequences_${PAIR}/*part_00[0-9].fastq | wc -l) / 2 )) ]]; then
+			echo "Expected number of split files for ${PAIR}, skipping splitting."
+		else
+			echo "Splitting ${PAIR} sequences..."
+			for FILE in ../01_Raw_Data/Sequences_${PAIR}/*new_scores.fastq
+			do
+				#Need to use a temporary file on cluster due to an old version of the programme.
+				
+				seqkit split2 -p 2 -j 6 -O ../06_Miscellaneous/tempsplit/ $FILE
+				#rm $FILE #Removing the file could save a bunch of space with full size data. Useful to keep during testing.
+				
+				mv ../06_Miscellaneous/tempsplit/* ../01_Raw_Data/Sequences_${PAIR}/
+			done
+			echo "Done at" $(date)
+		fi
+
+	#Join the reads (for ITS extraction path)
+	if [[ $(ls ../01_Raw_Data/Sequences_${PAIR}/*new_scores.fastq | wc -l) -eq $(ls ../01_Raw_Data/Sequences_${PAIR}/*_join.fastq | wc -l) ]]; then
+			echo "Expected number of joined ${PAIR} sequences, skipping joining."
+		else
+			echo "Joining ${PAIR} sequences..."
+			for FILE in ../01_Raw_Data/Sequences_${PAIR}/*part_001.fastq
+			do
+				SAMPLE=$(echo $FILE | sed s/"-reads_new_scores.part_001.fastq"/""/)
+				
+				fastq-join -v "/" -p 15 -m 40 $SAMPLE-reads_new_scores.part_001.fastq $SAMPLE-reads_new_scores.part_002.fastq -o $SAMPLE-reads_new_scores_%.fastq
+			done
+			echo "Done at" $(date)
+		fi
+
+		#Use Trimmomatic to clean up the forward and joined reads
+		#Remove the first 20 bp which will cut off the barcodes
+		#Remove low quality reads, sliding window of 6 bases and quality 20 SLIDINGWINDOW:6:20
+		#Remove sequences shorter than 100 bp MINLEN:100
+		if [[ $(ls ../01_Raw_Data/Sequences_${PAIR}/*new_scores.fastq | wc -l) -eq $(ls ../01_Raw_Data/Sequences_${PAIR}/*_join_trimmed.fastq | wc -l) ]]; then
+			echo "Expected number of trimmed ${PAIR} sequences, skipping trimming."
+			else
+				echo "Trimming ${PAIR} sequences..."
+				for FILE in ../01_Raw_Data/Sequences_${PAIR}/*part_001.fastq
+				do
+				
+					SAMPLE=$(echo $FILE | sed s/".part_001.fastq"/""/ )
+					
+					java -jar /home/lab141/tools/Trimmomatic-0.39/trimmomatic-0.39.jar SE -threads 7 -summary ${SAMPLE}.part_001_trimsummary.txt ${SAMPLE}.part_001.fastq ${SAMPLE}.part_001_trimmed.fastq HEADCROP:20 SLIDINGWINDOW:6:20 MINLEN:100
+					
+					java -jar /home/lab141/tools/Trimmomatic-0.39/trimmomatic-0.39.jar SE -threads 7 -summary ${SAMPLE}_join_trimsummary.txt ${SAMPLE}_join.fastq ${SAMPLE}_join_trimmed.fastq  HEADCROP:20 SLIDINGWINDOW:6:20 MINLEN:100
+					
+				echo "$FILE Done."
+				done
+				echo "Done at" $(date)
+		fi
+
+		#Extract ITS region
+		#To test whether ITS extraction improves the results or not.
+		if [[ $(ls ../01_Raw_Data/Sequences_${PAIR}/*new_scores.fastq | wc -l) -eq $(ls ../01_Raw_Data/Sequences_${PAIR}/*_join_trimmed_ITSxpress.fastq | wc -l) ]]; then
+			echo "Expected number of ITS extracted ${PAIR} sequences, skipping ITS extraction."
+			else
+				if [[ ${PAIR} == "ITS1f_ITS2" ]]; then
+					echo "Extracting ${PAIR} ITS1 sequences..."
+					conda activate ITSxpress
+					for FILE in ../01_Raw_Data/Sequences_${PAIR}/*join_trimmed.fastq
+					do
+						SAMPLE=$(echo $FILE | sed s/"_join_trimmed.fastq"/""/ )
+						
+						#Extract the ITS region
+						itsxpress --threads 6 --region ITS1 --taxa Fungi --single_end --fastq $FILE --log ${SAMPLE}_ITSxpress_logfile.txt --outfile ${SAMPLE}_join_trimmed_ITSxpress_empties.fastq --cluster_id 0.99
+						#Noticed a problem with empty reads which causes an error when running vsearch. Need to remove empty lines.
+						/home/lab141/tools/bbmap/reformat.sh in=${SAMPLE}_join_trimmed_ITSxpress_empties.fastq minconsecutivebases=1 out=${SAMPLE}_join_trimmed_ITSxpress.fastq
+					done
+					conda deactivate
+				fi
+				
+				if [[ ${PAIR} == "gITS7_ITS4" ]]; then
+					echo "Extracting ${PAIR} ITS2 sequences..."
+					conda activate ITSxpress
+					for FILE in ../01_Raw_Data/Sequences_${PAIR}/*join_trimmed.fastq
+					do
+						SAMPLE=$(echo $FILE | sed s/"_join_trimmed.fastq"/""/ )
+						
+						#Extract the ITS region
+						itsxpress --threads 6 --region ITS2 --taxa Fungi --single_end --fastq $FILE --log ${SAMPLE}_ITSxpress_logfile.txt --outfile ${SAMPLE}_join_trimmed_ITSxpress.fastq --cluster_id 0.99
+					done
+					conda deactivate
+				fi
+				
+				if [[ ${PAIR} == "V6_V8_new" ]]; then
+					echo "${PAIR} does not amplify ITS sequences, skipping ITS extraction."
+				fi
+				echo "Done at" $(date)
+				#Using clustering at 99% rather 100% because otherwise there's an error. Probably to do with VSearch version (https://github.com/USDA-ARS-GBRU/itsxpress/issues/31)
+		fi
+
+		#Create a forward read only manifest for the samples
+		echo "Creating ${PAIR} forward-only manifest"
+		echo "sample-id	absolute-filepath" > ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_forward_${PAIR}.tsv
+		for FILE in ../01_Raw_Data/Sequences_${PAIR}/*.part_001_trimmed.fastq
+		do
+			SAMPLE=$(echo $FILE | sed s/"-reads_new_scores.part_001_trimmed.fastq"/""/ | sed s/"\.\.\/01_Raw_Data\/Sequences_${PAIR}\/"/""/ )
+			echo "${SAMPLE}	`readlink -f \/mnt\/DATA01\/ASV_OTU_Project\/01_Raw_Data\/Sequences_${PAIR}\/${SAMPLE}-reads_new_scores.part_001_trimmed.fastq`" >> ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_forward_${PAIR}.tsv
+		done
+		#To fix problems (pasting into server is always odd) This step might not be needed when running from script but can't hurt to leave it in.
+		sed -i s/" "/"\t"/g ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_forward_${PAIR}.tsv
+		echo "Done at" $(date)
+
+		#Create a joined ITS extracted manifest for the samples
+		if [[ ${PAIR} == "V6_V8_new" ]]; then
+			echo "${PAIR} does not amplify ITS sequences."
+			echo "Creating ${PAIR} joined manifest"
+			echo "sample-id	absolute-filepath" > ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_ITSxpress_${PAIR}.tsv
+			for FILE in ../01_Raw_Data/Sequences_${PAIR}/*_join_trimmed.fastq
+			do
+				SAMPLE=$(echo $FILE | sed s/"-reads_new_scores_join_trimmed.fastq"/""/ | sed s/"\.\.\\/01_Raw_Data\/Sequences_${PAIR}\/"/""/ )
+				echo "${SAMPLE}	`readlink -f \/mnt\/DATA01\/ASV_OTU_Project\/01_Raw_Data\/Sequences_${PAIR}\/${SAMPLE}-reads_new_scores_join_trimmed.fastq`" >> ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_ITSxpress_${PAIR}.tsv
+			done
+			#To fix problems (pasting into server is always odd) This step might not be needed when running from script but can't hurt to leave it in.
+			sed -i s/" "/"\t"/g ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_ITSxpress_${PAIR}.tsv
+			echo "Done at" $(date)
+
+			else
+				echo "Creating ${PAIR} ITS-extracted manifest"
+				echo "sample-id	absolute-filepath" > ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_ITSxpress_${PAIR}.tsv
+				for FILE in ../01_Raw_Data/Sequences_${PAIR}/*_join_trimmed_ITSxpress.fastq
+				do
+					SAMPLE=$(echo $FILE | sed s/"-reads_new_scores_join_trimmed_ITSxpress.fastq"/""/ | sed s/"\.\.\/01_Raw_Data\/Sequences_${PAIR}\/"/""/ ) 
+					echo "${SAMPLE}	`readlink -f \/mnt\/DATA01\/ASV_OTU_Project\/01_Raw_Data\/Sequences_${PAIR}\/${SAMPLE}-reads_new_scores_join_trimmed_ITSxpress.fastq`" >> ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_ITSxpress_${PAIR}.tsv
+				done
+				#To fix problems (pasting into server is always odd) This step might not be needed when running from script but can't hurt to leave it in.
+				sed -i s/" "/"\t"/g ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_ITSxpress_${PAIR}.tsv
+				echo "Done at" $(date)
+		fi
+
+done
+
+
+#To prepare the reads from Pauvert
+
+PAIR=$(echo Pauvert)
+
+#Pauvert sequences are already split and have genuine quality scores
+
+#However, Pauvert sequences do not have proper identification of the forward and reverse reads. This needs to be fixed.
+if test -f "../01_Raw_Data/Sequences_Pauvert/Files_Fixed"; then
+	echo "Sequences have already been fixed, skipping the read verification character."
+else
+	echo "Adding verification character to the reads."
+	for FILE in ../01_Raw_Data/Sequences_${PAIR}/Forward_R1*.fastq
+	do
+		SAMPLE=$(echo $FILE | sed -E s/".+_"/""/ | sed s/".fastq"/""/ )
+		
+		sed 's/ 1:N:/\/1 1:N:/g' ../01_Raw_Data/Sequences_${PAIR}/Forward_R1_${SAMPLE}.fastq > ../01_Raw_Data/Sequences_${PAIR}/Forward_R1_${SAMPLE}-substituted.fastq
+		sed 's/ 2:N:/\/2 2:N:/g' ../01_Raw_Data/Sequences_${PAIR}/Reverse_R2_${SAMPLE}.fastq > ../01_Raw_Data/Sequences_${PAIR}/Reverse_R2_${SAMPLE}-substituted.fastq
+			
+	done
+	touch ../01_Raw_Data/Sequences_Pauvert/Files_Fixed
+fi
+
+#Join the reads (for ITS extraction path)
+if [[ $((3)) -eq $(ls ../01_Raw_Data/Sequences_${PAIR}/*_join.fastq | wc -l) ]]; then
+	echo "Expected number of joined ${PAIR} sequences, skipping joining."
+else
+	echo "Joining ${PAIR} sequences..."
+	for FILE in ../01_Raw_Data/Sequences_${PAIR}/Forward_R1*-substituted.fastq
+	do
+		SAMPLE=$(echo $FILE | sed -E s/".+_"/""/ | sed s/"-substituted.fastq"/""/ )
+		
+		fastq-join -v "/" -p 15 -m 40 ../01_Raw_Data/Sequences_${PAIR}/Forward_R1_${SAMPLE}-substituted.fastq ../01_Raw_Data/Sequences_${PAIR}/Reverse_R2_${SAMPLE}-substituted.fastq -o ../01_Raw_Data/Sequences_${PAIR}/${SAMPLE}_%.fastq
+	done
+	echo "Done at" $(date)
+fi
+
+#Use Trimmomatic to clean up the forward and joined reads
+#Remove the first 20 bp which will cut off the barcodes
+#Remove low quality reads, sliding window of 6 bases and quality 20 SLIDINGWINDOW:4:20
+#Remove sequences shorter than 150 bp MINLEN:100
+if [[ $((3)) -eq $(ls ../01_Raw_Data/Sequences_${PAIR}/*_join_trimmed.fastq | wc -l) ]]; then
+	echo "Expected number of trimmed ${PAIR} sequences, skipping trimming."
+else
+	echo "Traimming ${PAIR} sequences..."
+	for FILE in ../01_Raw_Data/Sequences_${PAIR}/Forward_R1*-substituted.fastq
+	do
+	
+		SAMPLE=$(echo $FILE | sed -E s/".+_"/""/ | sed s/"-substituted.fastq"/""/ )
+		
+		java -jar /home/lab141/tools/Trimmomatic-0.39/trimmomatic-0.39.jar SE -threads 7 -summary ../01_Raw_Data/Sequences_${PAIR}/${SAMPLE}.part_001_trimmed_trimsummary.txt ../01_Raw_Data/Sequences_${PAIR}/Forward_R1_${SAMPLE}-substituted.fastq ../01_Raw_Data/Sequences_${PAIR}/${SAMPLE}.part_001_trimmed.fastq HEADCROP:20 SLIDINGWINDOW:6:20 MINLEN:100
+		
+		java -jar /home/lab141/tools/Trimmomatic-0.39/trimmomatic-0.39.jar SE -threads 7 -summary ../01_Raw_Data/Sequences_${PAIR}/${SAMPLE}_join_trimsummary.txt ../01_Raw_Data/Sequences_${PAIR}/${SAMPLE}_join.fastq ../01_Raw_Data/Sequences_${PAIR}/${SAMPLE}_join_trimmed.fastq HEADCROP:20 SLIDINGWINDOW:6:20 MINLEN:100
+		
+	echo "$FILE Done."
+	done
+	echo "Done at" $(date)
+fi
+
+#Extract ITS region
+#To test whether ITS extraction improves the results or not.
+if [[ $((3)) -eq $(ls ../01_Raw_Data/Sequences_${PAIR}/*_join_trimmed_ITSxpress.fastq | wc -l) ]]; then
+	echo "Expected number of ITS extracted ${PAIR} sequences, skipping ITS extraction."
+else
+	
+	echo "Extracting ${PAIR} ITS1 sequences..."
+	conda activate ITSxpress
+	for FILE in ../01_Raw_Data/Sequences_${PAIR}/*join_trimmed.fastq
+	do
+		SAMPLE=$(echo $FILE | sed s/"_join_trimmed.fastq"/""/ )
+		
+		#Extract the ITS region
+		itsxpress --threads 6 --region ITS1 --taxa Fungi --single_end --fastq $FILE --log ${SAMPLE}_ITSxpress_logfile.txt --outfile ${SAMPLE}_join_trimmed_ITSxpress.fastq --cluster_id 0.99
+	done
+	conda deactivate
+	echo "Done at" $(date)
+fi
+	
+#Create a forward read only manifest for the samples
+echo "Creating ${PAIR} forward-only manifest"
+echo "sample-id	absolute-filepath" > ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_forward_${PAIR}.tsv
+for FILE in ../01_Raw_Data/Sequences_${PAIR}/*.part_001_trimmed.fastq
+do
+	SAMPLE=$(echo $FILE | sed s/".part_001_trimmed.fastq"/""/ | sed s/"\.\.\/01_Raw_Data\/Sequences_${PAIR}\/"/""/ )
+	echo "${SAMPLE}	`readlink -f \/mnt\/DATA01\/ASV_OTU_Project\/01_Raw_Data\/Sequences_${PAIR}\/${SAMPLE}.part_001_trimmed.fastq`" >> ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_forward_${PAIR}.tsv
+done
+#To fix problems (pasting into server is always odd) This step might not be needed when running from script but can't hurt to leave it in.
+sed -i s/" "/"\t"/g ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_forward_${PAIR}.tsv
+echo "Done at" $(date)
+
+#Create a joined ITS extracted manifest for the samples
+echo "Creating ${PAIR} ITS-extracted manifest"
+echo "sample-id	absolute-filepath" > ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_ITSxpress_${PAIR}.tsv
+for FILE in ../01_Raw_Data/Sequences_${PAIR}/*_join_trimmed_ITSxpress.fastq
+do
+	SAMPLE=$(echo $FILE | sed s/"_join_trimmed_ITSxpress.fastq"/""/ | sed s/"\.\.\/01_Raw_Data\/Sequences_${PAIR}\/"/""/ )
+	echo "${SAMPLE}	`readlink -f \/mnt\/DATA01\/ASV_OTU_Project\/01_Raw_Data\/Sequences_${PAIR}\/${SAMPLE}_join_trimmed_ITSxpress.fastq`" >> ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_ITSxpress_${PAIR}.tsv
+done
+#To fix problems (pasting into server is always odd) This step might not be needed when running from script but can't hurt to leave it in.
+sed -i s/" "/"\t"/g ../01_Raw_Data/Sequences_${PAIR}/grinder_manifest_ITSxpress_${PAIR}.tsv
+echo "Done at" $(date)
+
+
+echo "Finished at" $(date)

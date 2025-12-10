@@ -1,0 +1,65 @@
+#References
+#https://forum.qiime2.org/t/processing-filtering-and-evaluating-the-silva-database-and-other-reference-sequence-data-with-rescript/15494
+
+#Activate QIIME2
+conda activate qiime2-amplicon-2024.2
+
+#Create folder
+mkdir ../06_Miscellaneous/Silva_SSU_Classifier
+
+#Change to working directory
+cd ../06_Miscellaneous/Silva_SSU_Classifier/
+
+#Download the correct SILVA database files, no species labels
+qiime rescript get-silva-data --p-version '138.1' \
+    --p-target 'SSURef_NR99' \
+    --o-silva-sequences silva-138.1-ssu-nr99-seqs.qza \
+    --o-silva-taxonomy silva-138.1-ssu-nr99-tax.qza
+
+#Cull low quality sequences
+qiime rescript cull-seqs \
+    --i-sequences silva-138.1-ssu-nr99-seqs.qza \
+    --o-clean-sequences silva-138.1-ssu-nr99-seqs-cleaned.qza
+
+#Filter by length and taxonomy
+qiime rescript filter-seqs-length-by-taxon \
+    --i-sequences silva-138.1-ssu-nr99-seqs-cleaned.qza \
+    --i-taxonomy silva-138.1-ssu-nr99-tax.qza \
+    --p-labels Archaea Bacteria Eukaryota \
+    --p-min-lens 900 1200 1400 \
+    --o-filtered-seqs silva-138.1-ssu-nr99-seqs-filt.qza \
+    --o-discarded-seqs silva-138.1-ssu-nr99-seqs-discard.qza
+
+#dereplicate with lowest common ancestor
+qiime rescript dereplicate \
+    --i-sequences silva-138.1-ssu-nr99-seqs-filt.qza  \
+    --i-taxa silva-138.1-ssu-nr99-tax.qza \
+    --p-mode 'lca' \
+    --o-dereplicated-sequences silva-138.1-ssu-nr99-seqs-derep-lca.qza \
+    --o-dereplicated-taxa silva-138.1-ssu-nr99-tax-derep-lca.qza
+
+#Extract the amplicon specific region for our V6_V8_new primers
+qiime feature-classifier extract-reads \
+    --i-sequences silva-138.1-ssu-nr99-seqs-derep-lca.qza \
+    --p-f-primer AATTYGAHTCAACRCGGG  \
+    --p-r-primer CGACRGGMGGTGTGBACA \
+    --p-n-jobs 6 \ 
+    --p-read-orientation 'forward' \
+    --o-reads silva-138.1-ssu-nr99-seqs-V6_V8_new.qza
+
+#Dereplicate extracted region, again using lca
+qiime rescript dereplicate \
+    --i-sequences silva-138.1-ssu-nr99-seqs-V6_V8_new.qza \
+    --i-taxa silva-138.1-ssu-nr99-tax-derep-lca.qza \
+    --p-mode 'lca' \
+    --o-dereplicated-sequences silva-138.1-ssu-nr99-seqs-V6_V8_new-lca.qza \
+    --o-dereplicated-taxa  silva-138.1-ssu-nr99-tax-V6_V8_new-derep-lca.qza
+
+#Train the region specific classifier
+qiime feature-classifier fit-classifier-naive-bayes \
+    --i-reference-reads silva-138.1-ssu-nr99-seqs-V6_V8_new-lca.qza \
+    --i-reference-taxonomy silva-138.1-ssu-nr99-tax-V6_V8_new-derep-lca.qza \
+    --o-classifier silva-138.1-ssu-nr99-V6_V8_new-classifier.qza
+
+conda deactivate
+
